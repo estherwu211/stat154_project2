@@ -4,6 +4,7 @@ This code is written by Chenxing Wu and Yanting Pan for the purpose of completin
 ## To run the code
 1. Download the whole github repository. 
 2. Open project2.Rmd.
-3. On line 24-26, where the data is read in, change the address to your data's position.
-4. Run the .Rmd file, and all related models and images will be generated.
+3. Run lines 9-19, install any necessary packages.
+4. On lines 24-26, where the data is read in, change the address to your data's position.
+5. Run the project2.Rmd file, and all related models and images will be generated.
 
