@@ -1,0 +1,256 @@
+---
+title: "CVgeneric"
+output: html_document
+---
+
+```{r}
+find_point = function(in_length, min_x, max_x, min_y, max_y){
+  x_length = max_x - min_x
+  y_length = max_y - min_y
+  
+  point_x = 0
+  point_y = 0
+
+  if (in_length < x_length){
+    point_x = min_x + in_length
+    point_y = max_y
+  }
+  else if (in_length < x_length + y_length){
+    point_x = max_x
+    point_y = max_y - (in_length - x_length)
+  }
+  else if (in_length < 2 * x_length + y_length){
+    point_x = max_x - (in_length - x_length - y_length)
+    point_y = min_y 
+  }
+  else{
+    point_x = min_x
+    point_y = min_y + (in_length - 2 * x_length - y_length)
+  }
+  return(c(point_x, point_y))
+}
+```
+
+```{r}
+find_ab = function(x1, y1, x2, y2){
+  a = (y1-y2)/(x1-x2)
+  b = y1 - a * x1
+  return(c(a, b))
+}
+```
+
+```{r}
+# Method 1, horizontal slice
+cv_split_m1 = function(k, in_data){
+  min_y = min(in_data$y_coor)
+  max_y = max(in_data$y_coor)
+  y_length = max_y - min_y
+  seg = y_length/k
+  
+  val_data = list()
+  left_data = in_data
+  for (i in 1:k){
+    con1 = left_data$y_coor >= (seg * (i-1) + min_y)
+    con2 = left_data$y_coor < (seg * i + min_y)
+    val_idx = con1 & con2
+    val_data[[i]] = left_data[val_idx, ]
+    left_data = left_data[!val_idx, ]
+  }
+  
+  return(val_data)
+}
+```
+
+```{r}
+# CV for method 1
+cv_method1 = function(in_mod_func, k, train_data_1, train_data_2, train_data_3, in_test_data, loss_func){
+  cv1 = cv_split_m1(k, train_data_1)
+  cv2 = cv_split_m1(k, train_data_2)
+  cv3 = cv_split_m1(k, train_data_3)
+  
+  cv_acc = c()
+  test_acc = c()
+  best_acc = 0
+  best_val = 0
+  best_idx = 0
+  all_roc = list()
+  all_mod = list()
+  all_label = list()
+  
+  for (i in 1:k){
+    this_val = c()
+    this_train = c()
+    for (j in 1:k){
+      if (j == i){
+        this_val = rbind(cv1[[j]], 
+                         cv2[[j]],
+                         cv3[[j]])
+      }
+      else{
+        this_train = rbind(cv1[[j]], 
+                         cv2[[j]],
+                         cv3[[j]])
+      }
+    }
+    this_mod = in_mod_func(this_train)
+    pred_cv = predict(this_mod, this_val)
+    acc_cv = loss_func(pred_cv, this_val$label)
+    cv_acc[i] = acc_cv
+    pred_roc = predict(this_mod, this_val, type = "prob")[,'1']
+    all_roc[[i]] = pred_roc
+    all_mod[[i]] = this_mod
+    all_label[[i]] = this_val$label
+    
+    if (acc_cv > best_acc){
+      best_acc = acc_cv
+      best_val = this_val
+      best_idx = i
+    }
+    
+    pred_test = predict(this_mod, in_test_data)
+    acc_test = loss_func(pred_test, in_test_data$label)
+    test_acc[i] = acc_test
+    print(i)
+  }
+  list(
+    cv_acc = cv_acc,
+    test_acc = test_acc,
+    best_val = best_val,
+    best_idx = best_idx,
+    all_roc = all_roc,
+    all_mod = all_mod,
+    all_label = all_label
+  )
+}
+```
+
+```{r}
+cv_split_m2 = function(in_image, total_k, test_per){
+  min_x = min(in_image$x_coor)
+  max_x = max(in_image$x_coor)
+  min_y = min(in_image$y_coor)
+  max_y = max(in_image$y_coor)
+  
+  x_length = max_x - min_x
+  y_length = max_y - min_y
+  peri = 2 * (x_length + y_length)
+  
+  test_length = peri * test_per
+  val_length = (peri-test_length)/total_k
+  
+  test_point = find_point(test_length, min_x, max_x, min_y, max_y)
+  
+  mid_x = x_length/2 + min_x
+  mid_y = y_length/2 + min_y
+  
+  line1 = find_ab(mid_x, mid_y, min_x, max_y)
+  line2 = find_ab(mid_x, mid_y, test_point[1], test_point[2])
+  
+  con1 = (in_image$y_coor - (line1[1] * in_image$x_coor + line1[2])) >= 0
+  con2 = (in_image$y_coor - (line2[1] * in_image$x_coor + line2[2])) > 0
+  test_idx = con1 & con2
+  
+  test_data = in_image[test_idx,]
+  val_train_data = in_image[!test_idx,]
+  total_data = nrow(test_data)
+  each_val_data = (nrow(in_image) - nrow(test_data))/total_k
+  
+  val_data = list()
+  idx_list = c(1:total_k)
+  old_line = line2
+  left_data = val_train_data
+  for (i in 1:total_k){
+    val_point = find_point(test_length + val_length * i, min_x, max_x, min_y, max_y)
+    new_line = find_ab(mid_x, mid_y, val_point[1], val_point[2])
+    con3 = (left_data$y_coor - (old_line[1] * left_data$x_coor + old_line[2])) >= 0
+    con4 = (left_data$y_coor - (new_line[1] * left_data$x_coor + new_line[2])) < 0
+    
+    if (total_data < nrow(in_image) * 5/8 & total_data > nrow(in_image) * 1/8){
+      con3 = (left_data$y_coor - (old_line[1] * left_data$x_coor + old_line[2])) <= 0
+    }
+    if ((total_data + each_val_data) <  nrow(in_image) * 5/8 & (total_data + each_val_data) > nrow(in_image) * 1/8){
+      con4 = (left_data$y_coor - (new_line[1] * left_data$x_coor + new_line[2])) > 0
+    }
+  
+    this_val_idx = con3 & con4
+    stored_data = left_data[this_val_idx,]
+    stored_data = stored_data[(stored_data$label != 0),]
+    stored_data$label = as.factor(stored_data$label)
+    val_data[[idx_list[i]]] = stored_data
+    old_line = new_line
+    left_data = left_data[!this_val_idx, ]
+    total_data = total_data + sum(this_val_idx)
+  }
+  
+  return(val_data)
+}
+```
+
+```{r}
+cv_method2 = function(in_mod_func, k, train_data_1, train_data_2, train_data_3, in_test_data, loss_func, test_per){
+  cv1 = cv_split_m2(train_data_1, k, test_per)
+  cv2 = cv_split_m2(train_data_2, k, test_per)
+  cv3 = cv_split_m2(train_data_3, k, test_per)
+  
+  cv_acc = c()
+  test_acc = c()
+  best_acc = 0
+  best_mod = 0
+  best_val = 0
+  best_roc = 0
+  all_roc = list()
+  all_mod = list()
+  all_label = list()
+  
+  for (i in 1:k){
+    this_val = c()
+    this_train = c()
+    for (j in 1:k){
+      if (j == i){
+        this_val = rbind(cv1[[j]], 
+                         cv2[[j]],
+                         cv3[[j]])
+      }
+      else{
+        this_train = rbind(cv1[[j]], 
+                         cv2[[j]],
+                         cv3[[j]])
+      }
+    }
+    
+    this_mod = in_mod_func(this_train)
+    pred_cv = predict(this_mod, this_val)
+    acc_cv = loss_func(pred_cv, this_val$label)
+    cv_acc[i] = acc_cv
+    pred_roc = predict(this_mod, this_val, type = "prob")[,'1']
+    all_roc[[i]] = pred_roc
+    all_mod[[i]] = this_mod
+    all_label[[i]] = this_val$label
+    
+    if (acc_cv > best_acc){
+      best_acc = acc_cv
+      best_val = this_val
+      best_idx = i
+    }
+    
+    pred_test = predict(this_mod, in_test_data)
+    acc_test = loss_func(pred_test, in_test_data$label)
+    test_acc[i] = acc_test
+    
+    print(i)
+  }
+  list(
+    cv_acc = cv_acc,
+    test_acc = test_acc,
+    best_val = best_val,
+    best_idx = best_idx,
+    all_roc = all_roc,
+    all_mod = all_mod,
+    all_label = all_label
+  )
+}
+```
+
+
+
+
