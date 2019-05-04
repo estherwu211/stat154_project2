@@ -1,0 +1,1581 @@
+---
+title: "Project2-Predicting the White: Cloud or Ice-covered Land?"
+author: "Yanting Pan; Chenxing Wu"
+date: "4/25/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(GGally)
+library(reshape2)
+library(tree)
+library(gridExtra)
+library(caret)
+library(e1071)
+library(ROCit)
+library(randomForest)
+library(ranger)
+library(ggpubr)
+```
+
+```{r}
+## load data
+image1 = read.table('image1.txt')
+image2 = read.table('image2.txt')
+image3 = read.table('image3.txt')
+```
+
+
+```{r}
+## rename column
+col_name = c('y_coor', 'x_coor', 'label', 'NDAI', 'SD', 'CORR', 'DF', 'CF', 'BF', 'AF', 'AN')
+names(image1) = col_name
+names(image2) = col_name
+names(image3) = col_name
+```
+
+## 1
+
+### (b)
+
+```{r}
+all <- list(image1, image2, image3)
+diff_class = matrix(NA, nrow = 3, ncol = 3)
+row.names(diff_class) <-  c('not cloud', 'cloud', 'unlabeled')
+colnames(diff_class) <- c('image1', 'image2', 'image3')
+  
+
+for (i in 1:3){
+  diff_class[1,i] = nrow(all[[i]][all[[i]]$label==-1,])
+  diff_class[2,i] = nrow(all[[i]][all[[i]]$label==1,])
+  diff_class[3,i] = nrow(all[[i]][all[[i]]$label==0,])
+}
+
+## seperated three images
+sep_p = diff_class/(apply(diff_class, 2, sum))
+
+#png(filename = "1-2-2.png", width=480,height=480) 
+#grid.table(sep_p) 
+#dev.off() 
+
+
+## all three images
+all_p = as.data.frame(apply(diff_class, 1, sum)/(sum(apply(diff_class, 1, sum))))
+names(all_p) = 'proportion'
+
+
+#png(filename = "1-2-1.png", width=480,height=480) 
+#grid.table(all_p) 
+#dev.off()
+```
+
+
+```{r}
+## box plot for NDAI, SD, COR
+df_all = rbind.data.frame(image1, image2, image3)
+image_num = c(rep('image1', nrow(image1)), rep('image2', nrow(image2)), rep('image3', nrow(image3)))
+df_all$image_num = image_num
+df_new = subset(df_all, select = c(image_num, NDAI, SD, CORR))
+#df_melt = melt(data= df_new, id.vars = 'image_num', measure.vars = c('NDAI', 'SD', 'CORR'))
+#names(df_melt) = c('Image', 'Features', 'Value')
+names(df_new) = c('Image','NDAI', 'SD', 'CORR')
+
+p1 <- ggplot(df_new, aes(fill=Image, y=NDAI, x=Image)) + 
+  geom_boxplot() + labs(x='') + theme(legend.position="bottom")
+p2 <- ggplot(df_new, aes(fill=Image, y=SD, x=Image)) +
+  geom_boxplot() + labs(x='')
+p3 <- ggplot(df_new, aes(fill=Image, y=CORR, x=Image)) + 
+  geom_boxplot() + labs(x='')
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+mylegend = g_legend(p1)
+
+require(gridExtra)
+grid.arrange(arrangeGrob(p1 + theme(legend.position="none"),
+                         p2 + theme(legend.position="none"),
+                         p3 + theme(legend.position="none"),
+                         nrow=1),
+             mylegend, nrow=2,heights=c(10, 1))
+```
+
+```{r}
+p4 <- ggplot(image1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(labels = c("not cloud", "unlabeled", "cloud"), values=c("green", "grey", "white")) +
+  theme(legend.position="bottom")
+```
+
+```{r}
+p5 <- ggplot(image2, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(labels = c("not cloud", "unlabeled", "cloud"), values=c("green", "grey", "white")) 
+```
+
+```{r}
+p6 <- ggplot(image3, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(labels = c("not cloud", "unlabeled", "cloud"), values=c("green", "grey", "white"))
+
+```
+
+```{r}
+mylegend_new = g_legend(p4)
+
+grid.arrange(arrangeGrob(p4 + theme(legend.position="none"),
+                         p5 + theme(legend.position="none"),
+                         p6 + theme(legend.position="none"),
+                         nrow=1),
+             mylegend_new, nrow=2,heights=c(10, 1))
+```
+
+### (c)
+
+```{r}
+df_all$label = factor(df_all$label)
+all_sub = subset(df_all, select = -c(y_coor, x_coor, image_num))
+```
+
+
+```{r}
+ggcorr(all_sub[, -1], geom = "blank", label = TRUE, hjust = 0.75) +
+  geom_point(size = 10, aes(color = coefficient > 0, alpha = abs(coefficient) >= 0.6)) +
+  scale_alpha_manual(values = c("TRUE" = 0.25, "FALSE" = 0)) +
+  guides(color = FALSE, alpha = FALSE)
+```
+
+
+```{r}
+cor_table = matrix(NA, nrow = 5, ncol =2)
+cor_value = c('0 - .19', '')
+
+corr = c()
+
+for (i in 2: ncol(all_sub)){
+  corr[i-1] = cor(all_sub[,i], as.numeric(all_sub$label))
+}
+
+names(corr) = c('NDAI', 'SD', 'CORR', 'DF', 'CF', 'BF', 'AF', 'AN')
+
+sort(corr, decreasing=TRUE)
+
+#png(filename = "1-3-2.png", width=480,height=480) 
+#grid.table(sort(corr, decreasing=TRUE)) 
+#dev.off()
+```
+
+
+
+
+
+
+## 2
+
+### (a)
+
+```{r}
+# Method 1, horizontal slice
+train_test_split_m1 = function(test_size, val_size, in_data){
+  train_size = 1 - test_size - val_size
+  y_length = max(in_data$y_coor) - min(in_data$y_coor)
+
+  test_idx = in_data$y_coor < (test_size * y_length + min(in_data$y_coor))
+  test_data = in_data[test_idx,]
+  val_train_data = in_data[!test_idx,]
+  
+  val_idx = val_train_data$y_coor < ((test_size+val_size) * y_length
+  + min(in_data$y_coor))
+  val_data = val_train_data[val_idx,]
+  train_data = val_train_data[!val_idx,]
+
+  list(
+    test_data = test_data,
+    val_data = val_data,
+    train_data = train_data
+  )
+}
+```
+
+```{r}
+#test/val/train_<split method>_<image id>
+split1_1 = train_test_split_m1(0.2, 0.1, image1)
+test_1_1 = split1_1$test_data
+val_1_1 = split1_1$val_data
+train_1_1 = split1_1$train_data
+
+split1_2 = train_test_split_m1(0.2, 0.1, image2)
+test_1_2 = split1_2$test_data
+val_1_2 = split1_2$val_data
+train_1_2 = split1_2$train_data
+
+split1_3 = train_test_split_m1(0.2, 0.1, image3)
+test_1_3 = split1_3$test_data
+val_1_3 = split1_3$val_data
+train_1_3 = split1_3$train_data
+```
+
+```{r}
+n_slice = c(78, 116)
+ggplot(image1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(labels = c("not cloud", "unlabeled", "cloud"), values=c("green", "grey", "white")) +
+  geom_hline(yintercept = n_slice) +
+  annotate("text", x = 220, y = c(40, 100, 250), label = c("Test", "Validation", "Train")) + 
+  ylim(0, 390) +
+  xlim(60, 380)
+```
+
+```{r}
+p1_1 = ggplot(test_1_1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(values=c("green", "grey", "white")) + 
+  theme(legend.position = "none") + 
+  theme(legend.text=element_text(size=12)) + 
+  ylim(0, 390) +
+  annotate("text", x = 220, y = 40, label = "Test")
+```
+
+```{r}
+p1_2 = ggplot(val_1_1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(values=c("green", "grey", "white")) + 
+  theme(legend.position = "none") + 
+  theme(legend.text=element_text(size=12)) + 
+  ylim(0, 390) +
+  annotate("text", x = 220, y = 100, label = "Validation")
+```
+
+```{r}
+p1_3 = ggplot(train_1_1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(values=c("green", "grey", "white")) + 
+  theme(legend.position = "none") + 
+  theme(legend.text=element_text(size=12)) + 
+  ylim(0, 390) +
+  annotate("text", x = 220, y = 250, label = "Train")
+
+ggpubr::ggarrange(p1_1, p1_2, p1_3, nrow = 1, ncol = 3)
+```
+
+```{r}
+find_point = function(in_length, min_x, max_x, min_y, max_y){
+  x_length = max_x - min_x
+  y_length = max_y - min_y
+  
+  point_x = 0
+  point_y = 0
+
+  if (in_length < x_length){
+    point_x = min_x + in_length
+    point_y = max_y
+  }
+  else if (in_length < x_length + y_length){
+    point_x = max_x
+    point_y = max_y - (in_length - x_length)
+  }
+  else if (in_length < 2 * x_length + y_length){
+    point_x = max_x - (in_length - x_length - y_length)
+    point_y = min_y 
+  }
+  else{
+    point_x = min_x
+    point_y = min_y + (in_length - 2 * x_length - y_length)
+  }
+  return(c(point_x, point_y))
+}
+```
+
+```{r}
+find_ab = function(x1, y1, x2, y2){
+  a = (y1-y2)/(x1-x2)
+  b = y1 - a * x1
+  return(c(a, b))
+}
+```
+
+```{r}
+train_test_split_m2 = function(in_image, total_k, test_k, val_k){
+  min_x = min(in_image$x_coor)
+  max_x = max(in_image$x_coor)
+  min_y = min(in_image$y_coor)
+  max_y = max(in_image$y_coor)
+  
+  x_length = max_x - min_x
+  y_length = max_y - min_y
+  peri = 2 * (x_length + y_length)
+  
+  test_length = peri/total_k * test_k
+  val_length = peri/total_k * (test_k + val_k)
+  
+  test_point = find_point(test_length, min_x, max_x, min_y, max_y)
+  val_point = find_point(val_length, min_x, max_x, min_y, max_y)
+  
+  mid_x = x_length/2 + min_x
+  mid_y = y_length/2 + min_y
+  
+  line1 = find_ab(mid_x, mid_y, min_x, max_y)
+  line2 = find_ab(mid_x, mid_y, test_point[1], test_point[2])
+  line3 = find_ab(mid_x, mid_y, val_point[1], val_point[2])
+  
+  con1 = (in_image$y_coor - (line1[1] * in_image$x_coor + line1[2])) >= 0
+  con2 = (in_image$y_coor - (line2[1] * in_image$x_coor + line2[2])) > 0
+  test_idx = con1 & con2
+  
+  test_data = in_image[test_idx,]
+  val_train_data = in_image[!test_idx,]
+  
+  con3 = (val_train_data$y_coor - (line2[1] * val_train_data$x_coor + line2[2])) <= 0
+  con4 = (val_train_data$y_coor - (line3[1] * val_train_data$x_coor + line3[2])) > 0
+  val_idx = con3 & con4
+  
+  val_data = val_train_data[val_idx,]
+  train_data = val_train_data[!val_idx,]
+  
+  list(
+    test_data = test_data,
+    val_data = val_data,
+    train_data = train_data
+  )
+}
+```
+
+```{r}
+#test/val/train_<split method>_<image id>
+split2_1 = train_test_split_m2(image1, 10, 2, 1)
+test_2_1 = split2_1$test_data
+val_2_1 = split2_1$val_data
+train_2_1 = split2_1$train_data
+
+split2_2 = train_test_split_m2(image2, 10, 2, 1)
+test_2_2 = split2_2$test_data
+val_2_2 = split2_2$val_data
+train_2_2 = split2_2$train_data
+
+split2_3 = train_test_split_m2(image3, 10, 2, 1)
+test_2_3 = split2_3$test_data
+val_2_3 = split2_3$val_data
+train_2_3 = split2_3$train_data
+```
+
+```{r}
+pic1 = ggplot(image1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(labels = c("not cloud", "unlabeled", "cloud"), values=c("green", "grey", "white")) +
+  theme(legend.text=element_text(size=12)) 
+
+pic1 +
+ geom_segment(aes(x = 65, y = 383, xend = 217, yend = 192.5), colour = "black") +
+ geom_segment(aes(x = 339, y = 383, xend = 217, yend = 192.5), colour = "black") +
+ geom_segment(aes(x = 369, y = 276, xend = 217, yend = 192.5), colour = "black") +
+ annotate("text", x = c(210, 325, 170), y = c(300, 300, 100), label = c("Test", "Validation", "Train")) + 
+  ylim(0, 390) +
+  xlim(60, 380)
+```
+
+```{r}
+p2_1 = ggplot(test_2_1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(values=c("green", "grey", "white")) + 
+  theme(legend.position = "none") + 
+  theme(legend.text=element_text(size=12)) + 
+  ylim(0, 390) +
+  xlim(60, 380) +
+  annotate("text", x = 210, y = 300, label = "Test")
+```
+
+```{r}
+p2_2 = ggplot(val_2_1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(values=c("green", "grey", "white")) + 
+  theme(legend.position = "none") + 
+  theme(legend.text=element_text(size=12)) + 
+  ylim(0, 390) +
+  xlim(60, 380) +
+  annotate("text", x = 325, y = 300, label = "Validation")
+```
+
+
+```{r}
+p2_3 = ggplot(train_2_1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(values=c("green", "grey", "white")) + 
+  theme(legend.position = "none") + 
+  theme(legend.text=element_text(size=12)) + 
+  ylim(0, 390) +
+  xlim(60, 380) +
+  annotate("text", x = 170, y = 100, label = "Train")
+```
+
+```{r}
+ggpubr::ggarrange(p2_1, p2_2, p2_3, nrow = 1, ncol = 3)
+```
+
+
+### (b)
+
+```{r}
+# On data splitted by method 1
+acc_test_1 = c(mean(test_1_1$label == -1), mean(test_1_2$label == -1), mean(test_1_3$label == -1))
+acc_val_1 = c(mean(val_1_1$label == -1), mean(val_1_2$label == -1), mean(val_1_3$label == -1))
+```
+
+```{r}
+# On data splitted by method 2
+acc_test_2 = c(mean(test_2_1$label == -1), mean(test_2_2$label == -1), mean(test_2_3$label == -1))
+acc_val_2 = c(mean(val_2_1$label == -1), mean(val_2_2$label == -1), mean(val_2_3$label == -1))
+```
+
+```{r}
+all_acc = as.matrix(cbind(acc_test_1, acc_val_1, acc_test_2, acc_val_2))
+rownames(all_acc) =  c("image1", "image2", "image3")
+colnames(all_acc) =  c("Test Acc 1", "Val Acc 1", "Test Acc 2", "Val Acc 2")
+```
+
+```{r}
+all_acc
+```
+
+```{r}
+#png(filename = "2-2-1.png", width=570,height=100) 
+#grid.table(all_acc) 
+#dev.off()
+```
+
+
+
+### (c)
+
+
+```{r}
+df = rbind.data.frame(train_2_1, train_2_2, train_2_3)
+df_train = df[df$label != 0, ]
+```
+
+#### first feature: NDAI
+
+```{r}
+ndai_th = 0.813637
+first_node_left = df_train[df_train$NDAI >=ndai_th, 3]
+first_node_right = df_train[df_train$NDAI <ndai_th, 3]
+
+## Gini index
+p_mk1 = length(which(first_node_left == -1))/length(first_node_left) 
+p_mk2 = length(which(first_node_right == 1))/length(first_node_right)
+G_1 = p_mk1*(1-p_mk1) + (p_mk2)*(1-p_mk2)
+
+first_node_class = c(rep('>= 0.76', length(first_node_left)), rep('< 0.76', length(first_node_right)))
+first_node_label = c(first_node_left, first_node_right)
+df_first_node = cbind.data.frame(first_node_class ,first_node_label)
+names(df_first_node) = c('class', 'label')
+df_first_node$label = factor(df_first_node$label)
+## group
+p10 = ggplot(df_first_node, aes(x=class, fill=label)) + 
+  geom_bar(position="dodge2") + labs(x='NDAI') + 
+  theme(legend.position="bottom")
+```
+
+#### second feature: CORR
+
+```{r}
+corr_th = 0.189932
+second_node_left = df_train[df_train$CORR >= corr_th, 3]
+second_node_right = df_train[df_train$CORR <corr_th, 3]
+
+## Gini index
+p_mk1 = length(which(second_node_left == -1))/length(second_node_left) 
+p_mk2 = length(which(second_node_right == 1))/length(second_node_right)
+G_2 = p_mk1*(1-p_mk1) + (p_mk2)*(1-p_mk2)
+
+
+
+second_node_class = c(rep('>= 0.19', length(second_node_left)), rep('< 0.19', length(second_node_right)))
+second_node_label = c(second_node_left, second_node_right)
+df_second_node = cbind.data.frame(second_node_class ,second_node_label)
+names(df_second_node) = c('class', 'label')
+df_second_node$label = factor(df_second_node$label)
+## group
+p11 = ggplot(df_second_node, aes(x=class, fill=label)) + 
+  geom_bar(position="dodge2") + labs(x='CORR')
+```
+
+#### third feature: AN
+
+```{r}
+an_th = 167.153
+third_node_left = df_train[df_train$AN >= an_th, 3]
+third_node_right = df_train[df_train$AN <an_th, 3]
+
+
+## Gini index
+p_mk1 = length(which(third_node_left == -1))/length(third_node_left) 
+p_mk2 = length(which(third_node_right == 1))/length(third_node_right)
+G_3 = p_mk1*(1-p_mk1) + (p_mk2)*(1-p_mk2)
+
+
+third_node_class = c(rep('>= 167.153', length(third_node_left)), rep('< 167.153', length(third_node_right)))
+third_node_label = c(third_node_left, third_node_right)
+df_third_node = cbind.data.frame(third_node_class, third_node_label)
+names(df_third_node) = c('class', 'label')
+df_third_node$label = factor(df_third_node$label)
+## group
+p12= ggplot(df_third_node, aes(x=class, fill=label)) + 
+  geom_bar(position="dodge2") + labs(x= 'AN')
+```
+
+
+```{r}
+mylegend_10 = g_legend(p10)
+
+require(gridExtra)
+grid.arrange(arrangeGrob(p10 + theme(legend.position="none"),
+                         p11 + theme(legend.position="none"),
+                         p12 + theme(legend.position="none"),
+                         nrow=1),
+             mylegend_10, nrow=2,heights=c(10, 1))
+```
+
+
+
+### (d)
+
+```{r}
+# Method 1, horizontal slice
+cv_split_m1 = function(k, in_data){
+  min_y = min(in_data$y_coor)
+  max_y = max(in_data$y_coor)
+  y_length = max_y - min_y
+  seg = y_length/k
+  
+  val_data = list()
+  left_data = in_data
+  for (i in 1:k){
+    con1 = left_data$y_coor >= (seg * (i-1) + min_y)
+    con2 = left_data$y_coor < (seg * i + min_y)
+    val_idx = con1 & con2
+    val_data[[i]] = left_data[val_idx, ]
+    left_data = left_data[!val_idx, ]
+  }
+  
+  return(val_data)
+}
+```
+
+```{r}
+# CV for method 1
+cv_method1 = function(in_mod_func, k, train_data_1, train_data_2, train_data_3, in_test_data, loss_func){
+  cv1 = cv_split_m1(k, train_data_1)
+  cv2 = cv_split_m1(k, train_data_2)
+  cv3 = cv_split_m1(k, train_data_3)
+  
+  cv_acc = c()
+  test_acc = c()
+  best_acc = 0
+  best_val = 0
+  best_idx = 0
+  all_roc = list()
+  all_mod = list()
+  all_label = list()
+  
+  for (i in 1:k){
+    this_val = c()
+    this_train = c()
+    for (j in 1:k){
+      if (j == i){
+        this_val = rbind(cv1[[j]], 
+                         cv2[[j]],
+                         cv3[[j]])
+      }
+      else{
+        this_train = rbind(cv1[[j]], 
+                         cv2[[j]],
+                         cv3[[j]])
+      }
+    }
+    this_mod = in_mod_func(this_train)
+    pred_cv = predict(this_mod, this_val)
+    acc_cv = loss_func(pred_cv, this_val$label)
+    cv_acc[i] = acc_cv
+    pred_roc = predict(this_mod, this_val, type = "prob")[,'1']
+    all_roc[[i]] = pred_roc
+    all_mod[[i]] = this_mod
+    all_label[[i]] = this_val$label
+    
+    if (acc_cv > best_acc){
+      best_acc = acc_cv
+      best_val = this_val
+      best_idx = i
+    }
+    
+    pred_test = predict(this_mod, in_test_data)
+    acc_test = loss_func(pred_test, in_test_data$label)
+    test_acc[i] = acc_test
+    print(i)
+  }
+  list(
+    cv_acc = cv_acc,
+    test_acc = test_acc,
+    best_val = best_val,
+    best_idx = best_idx,
+    all_roc = all_roc,
+    all_mod = all_mod,
+    all_label = all_label
+  )
+}
+```
+
+```{r}
+cv_split_m2 = function(in_image, total_k, test_per){
+  min_x = min(in_image$x_coor)
+  max_x = max(in_image$x_coor)
+  min_y = min(in_image$y_coor)
+  max_y = max(in_image$y_coor)
+  
+  x_length = max_x - min_x
+  y_length = max_y - min_y
+  peri = 2 * (x_length + y_length)
+  
+  test_length = peri * test_per
+  val_length = (peri-test_length)/total_k
+  
+  test_point = find_point(test_length, min_x, max_x, min_y, max_y)
+  
+  mid_x = x_length/2 + min_x
+  mid_y = y_length/2 + min_y
+  
+  line1 = find_ab(mid_x, mid_y, min_x, max_y)
+  line2 = find_ab(mid_x, mid_y, test_point[1], test_point[2])
+  
+  con1 = (in_image$y_coor - (line1[1] * in_image$x_coor + line1[2])) >= 0
+  con2 = (in_image$y_coor - (line2[1] * in_image$x_coor + line2[2])) > 0
+  test_idx = con1 & con2
+  
+  test_data = in_image[test_idx,]
+  val_train_data = in_image[!test_idx,]
+  total_data = nrow(test_data)
+  each_val_data = (nrow(in_image) - nrow(test_data))/total_k
+  
+  val_data = list()
+  idx_list = c(1:total_k)
+  old_line = line2
+  left_data = val_train_data
+  for (i in 1:total_k){
+    val_point = find_point(test_length + val_length * i, min_x, max_x, min_y, max_y)
+    new_line = find_ab(mid_x, mid_y, val_point[1], val_point[2])
+    con3 = (left_data$y_coor - (old_line[1] * left_data$x_coor + old_line[2])) >= 0
+    con4 = (left_data$y_coor - (new_line[1] * left_data$x_coor + new_line[2])) < 0
+    
+    if (total_data < nrow(in_image) * 5/8 & total_data > nrow(in_image) * 1/8){
+      con3 = (left_data$y_coor - (old_line[1] * left_data$x_coor + old_line[2])) <= 0
+    }
+    if ((total_data + each_val_data) <  nrow(in_image) * 5/8 & (total_data + each_val_data) > nrow(in_image) * 1/8){
+      con4 = (left_data$y_coor - (new_line[1] * left_data$x_coor + new_line[2])) > 0
+    }
+  
+    this_val_idx = con3 & con4
+    stored_data = left_data[this_val_idx,]
+    stored_data = stored_data[(stored_data$label != 0),]
+    stored_data$label = as.factor(stored_data$label)
+    val_data[[idx_list[i]]] = stored_data
+    old_line = new_line
+    left_data = left_data[!this_val_idx, ]
+    total_data = total_data + sum(this_val_idx)
+  }
+  
+  return(val_data)
+}
+```
+
+```{r}
+cv_method2 = function(in_mod_func, k, train_data_1, train_data_2, train_data_3, in_test_data, loss_func, test_per){
+  cv1 = cv_split_m2(train_data_1, k, test_per)
+  cv2 = cv_split_m2(train_data_2, k, test_per)
+  cv3 = cv_split_m2(train_data_3, k, test_per)
+  
+  cv_acc = c()
+  test_acc = c()
+  best_acc = 0
+  best_mod = 0
+  best_val = 0
+  best_roc = 0
+  all_roc = list()
+  all_mod = list()
+  all_label = list()
+  
+  for (i in 1:k){
+    this_val = c()
+    this_train = c()
+    for (j in 1:k){
+      if (j == i){
+        this_val = rbind(cv1[[j]], 
+                         cv2[[j]],
+                         cv3[[j]])
+      }
+      else{
+        this_train = rbind(cv1[[j]], 
+                         cv2[[j]],
+                         cv3[[j]])
+      }
+    }
+    
+    this_mod = in_mod_func(this_train)
+    pred_cv = predict(this_mod, this_val)
+    acc_cv = loss_func(pred_cv, this_val$label)
+    cv_acc[i] = acc_cv
+    pred_roc = predict(this_mod, this_val, type = "prob")[,'1']
+    all_roc[[i]] = pred_roc
+    all_mod[[i]] = this_mod
+    all_label[[i]] = this_val$label
+    
+    if (acc_cv > best_acc){
+      best_acc = acc_cv
+      best_val = this_val
+      best_idx = i
+    }
+    
+    pred_test = predict(this_mod, in_test_data)
+    acc_test = loss_func(pred_test, in_test_data$label)
+    test_acc[i] = acc_test
+    
+    print(i)
+  }
+  list(
+    cv_acc = cv_acc,
+    test_acc = test_acc,
+    best_val = best_val,
+    best_idx = best_idx,
+    all_roc = all_roc,
+    all_mod = all_mod,
+    all_label = all_label
+  )
+}
+```
+
+```{r}
+# Need to run code in ## 3 first
+test_splitted_1 = cv_split_m1(10, cv_1_1)
+```
+
+```{r}
+all_pic_1 = list()
+for (i in 1:10){
+  this_pic = ggplot(test_splitted_1[[i]], aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(values=c("green", "white")) + 
+  theme(legend.position = "none") + 
+  theme(legend.text=element_text(size=12)) + 
+  ylim(0,390) +
+  xlim(0,390) + 
+  annotate("text", x = 200, y = 350, label = i)
+  all_pic_1[[i]] = this_pic
+}
+```
+
+```{r}
+ggarrange(all_pic_1[[1]], all_pic_1[[2]], all_pic_1[[3]], all_pic_1[[4]],
+          all_pic_1[[5]], all_pic_1[[6]], all_pic_1[[7]], all_pic_1[[8]],
+          all_pic_1[[9]], all_pic_1[[10]], nrow = 2, ncol = 5)
+```
+
+```{r}
+test_splitted_2 = cv_split_m2(image1, 10, 0.2)
+```
+
+```{r}
+all_pic_2 = list()
+for (i in 1:10){
+  this_pic = ggplot(test_splitted_2[[i]], aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="x", y="y", col="") +
+  scale_color_manual(values=c("green", "white")) + 
+  theme(legend.position = "none") + 
+  theme(legend.text=element_text(size=12)) + 
+  ylim(0,390) +
+  xlim(0,390) + 
+  annotate("text", x = 200, y = 350, label = i)
+  all_pic_2[[i]] = this_pic
+}
+```
+
+```{r}
+ggarrange(all_pic_2[[1]], all_pic_2[[2]], all_pic_2[[3]], all_pic_2[[4]],
+          all_pic_2[[5]], all_pic_2[[6]], all_pic_2[[7]], all_pic_2[[8]],
+          all_pic_2[[9]], all_pic_2[[10]], nrow = 2, ncol = 5)
+```
+
+
+
+
+
+
+## 3
+
+### (a)
+
+```{r}
+# Merge training and validation data for cv and get rid of uncertain labels
+cv_1_1 = rbind(val_1_1, train_1_1)
+cv_1_1 = cv_1_1[(cv_1_1$label != 0),]
+cv_1_1$label = as.factor(cv_1_1$label)
+
+cv_1_2 = rbind(val_1_2, train_1_2)
+cv_1_2 = cv_1_2[(cv_1_2$label != 0),]
+cv_1_2$label = as.factor(cv_1_2$label)
+
+cv_1_3 = rbind(val_1_3, train_1_3)
+cv_1_3 = cv_1_3[(cv_1_3$label != 0),]
+cv_1_3$label = as.factor(cv_1_3$label)
+
+cv_2_1 = rbind(val_2_1, train_2_1)
+cv_2_1 = cv_2_1[(cv_2_1$label != 0),]
+cv_2_1$label = as.factor(cv_2_1$label)
+
+cv_2_2 = rbind(val_2_2, train_2_2)
+cv_2_2 = cv_2_2[(cv_2_2$label != 0),]
+cv_2_2$label = as.factor(cv_2_2$label)
+
+cv_2_3 = rbind(val_2_3, train_2_3)
+cv_2_3 = cv_2_3[(cv_2_3$label != 0),]
+cv_2_3$label = as.factor(cv_2_3$label)
+
+cv_test_1 = rbind(test_1_1, test_1_2, test_1_3)
+cv_test_1 = cv_test_1[(cv_test_1$label != 0),]
+cv_test_1$label = as.factor(cv_test_1$label)
+
+cv_test_2 = rbind(test_2_1, test_2_2, test_2_3)
+cv_test_2 = cv_test_2[(cv_test_2$label != 0),]
+cv_test_2$label = as.factor(cv_test_2$label)
+```
+
+```{r}
+loss_test = function(in_pred, in_actual){
+  mean(in_pred == in_actual)
+}
+```
+
+```{r}
+update_loss = function(in_cutoff, all_roc, all_label, all_mod, k, in_test_data){
+  new_acc = c()
+  best_idx = 0
+  best_acc = 0
+  test_acc = c()
+  for (i in 1:k){
+    this_roc = all_roc[[i]]
+    this_label = rep(-1, length(this_roc))
+    this_label[this_roc > in_cutoff] = 1
+    this_acc = loss_test(this_label, all_label[[i]])
+    
+    new_acc[i] = this_acc
+    if (this_acc > best_acc){
+      best_acc = this_acc
+      best_idx = i
+    }
+    
+    new_test_label = rep(-1, nrow(in_test_data))
+    new_test_pred = predict(all_mod[[i]], in_test_data, type = "prob")[,'1']
+    new_test_label[new_test_pred > in_cutoff] = 1
+    this_test_acc = loss_test(new_test_label, in_test_data$label)
+    test_acc[i] = this_test_acc
+  }
+  list(
+    new_acc = new_acc,
+    best_idx = best_idx,
+    test_acc = test_acc
+  )
+}
+```
+
+```{r}
+plot_roc_update = function(test_acc, k, in_test_data){
+  rocit_object <- rocit(score = test_acc$all_roc[[test_acc$best_idx]], 
+                        class = test_acc$best_val$label)
+  plot(rocit_object)
+  youden = which.max(rocit_object$TPR - rocit_object$FPR)
+  op_cutoff = rocit_object$Cutoff[youden]
+  op_TPR = rocit_object$TPR[youden]
+  op_FPR = rocit_object$FPR[youden]
+  updated_result = update_loss(op_cutoff, test_acc$all_roc, test_acc$all_label,
+                               test_acc$all_mod, k, in_test_data)
+  
+  list(
+    updated_result = updated_result,
+    op_TPR = op_TPR,
+    op_FPR = op_FPR,
+    op_cutoff = op_cutoff
+  )
+}
+```
+
+
+#### QDA
+
+```{r}
+qda_mod_func = function(in_data){
+  train(label ~ ., 
+                data = in_data, 
+                method="qda",family=binomial())
+}
+```
+
+```{r}
+qda_acc_1 = cv_method1(qda_mod_func, 10, cv_1_1, cv_1_2, cv_1_3, cv_test_1, loss_test)
+qda_update_result_1 = plot_roc_update(qda_acc_1, 10, cv_test_1)
+```
+
+```{r}
+qda_update_result_1
+```
+
+```{r}
+qda_acc_1$test_acc
+```
+
+```{r}
+qda_acc_1$cv_acc
+```
+
+```{r}
+qda_acc_2 = cv_method2(qda_mod_func, 10, image1, image2, image3, cv_test_2, loss_test, 0.2)
+qda_update_result_2 = plot_roc_update(qda_acc_2, 10, cv_test_2)
+```
+
+```{r}
+qda_update_result_2
+```
+
+```{r}
+qda_acc_2$test_acc
+```
+
+```{r}
+qda_acc_2$cv_acc
+```
+
+```{r}
+qda_cv = as.matrix(rbind(
+  qda_acc_1$cv_acc,
+  qda_acc_2$cv_acc,
+  qda_update_result_1$updated_result$new_acc,
+  qda_update_result_2$updated_result$new_acc
+))
+
+colnames(qda_cv) = paste("Fold", c(1:10), sep = " ")
+rownames(qda_cv) = c("CV acc Method 1", "CV acc Method 2", "CV acc Method 1 New Cutoff", "CV acc Method 2 New Cutoff")
+```
+
+```{r}
+qda_cv
+```
+
+```{r}
+png(filename = "3-3-1.png", width=1400, height=110) 
+grid.table(qda_cv) 
+dev.off()
+```
+
+#### Logistic
+
+```{r}
+log_mod_func = function(in_data){
+  train(label ~ ., 
+                data = in_data, 
+                method="glm",family=binomial())
+}
+```
+
+```{r}
+log_acc_1 = cv_method1(log_mod_func, 10, cv_1_1, cv_1_2, cv_1_3, cv_test_1, loss_test)
+log_update_result_1 = plot_roc_update(log_acc_1, 10, cv_test_1)
+```
+
+```{r}
+log_update_result_1
+```
+
+```{r}
+log_acc_1$test_acc
+```
+
+```{r}
+log_acc_1$cv_acc
+```
+
+```{r}
+log_acc_2 = cv_method2(log_mod_func, 10, image1, image2, image3, cv_test_2, loss_test, 0.2)
+log_update_result_2 = plot_roc_update(log_acc_2, 10, cv_test_2)
+```
+
+```{r}
+log_update_result_2
+```
+
+```{r}
+log_acc_2$test_acc
+```
+
+```{r}
+log_acc_2$cv_acc
+```
+
+```{r}
+log_cv = as.matrix(rbind(
+  log_acc_1$cv_acc,
+  log_acc_2$cv_acc,
+  log_update_result_1$updated_result$new_acc,
+  log_update_result_2$updated_result$new_acc
+))
+
+colnames(log_cv) = paste("Fold", c(1:10), sep = " ")
+rownames(log_cv) = c("CV acc Method 1", "CV acc Method 2", "CV acc Method 1 New Cutoff", "CV acc Method 2 New Cutoff")
+```
+
+```{r}
+log_cv
+```
+
+```{r}
+png(filename = "3-1-1.png", width=1400, height=110) 
+grid.table(log_cv) 
+dev.off()
+```
+
+
+
+#### svm
+
+```{r}
+svm_mod_func = function(in_data){
+  train(label ~ ., 
+                data = in_data, 
+                method="svmLinear2", probability = TRUE)
+}
+```
+
+```{r}
+svm_acc_1 = cv_method1(svm_mod_func, 10, cv_1_1, cv_1_2, cv_1_3, cv_test_1, loss_test)
+svm_update_result_1 = plot_roc_update(svm_acc_1, 10, cv_test_1)
+```
+
+```{r}
+svm_update_result_1
+```
+
+```{r}
+svm_acc_1$test_acc
+```
+
+```{r}
+svm_acc_1$cv_acc
+```
+
+```{r}
+svm_acc_2 = cv_method2(svm_mod_func, 10, image1, image2, image3, cv_test_2, loss_test, 0.2)
+svm_update_result_2 = plot_roc_update(svm_acc_2, 10, cv_test_2)
+```
+
+```{r}
+svm_update_result_2
+```
+
+```{r}
+svm_acc_2$test_acc
+```
+
+```{r}
+svm_acc_2$cv_acc
+```
+
+```{r}
+svm_cv = as.matrix(rbind(
+  svm_acc_1$cv_acc,
+  svm_acc_2$cv_acc,
+  svm_update_result_1$updated_result$new_acc,
+  svm_update_result_2$updated_result$new_acc
+))
+
+colnames(svm_cv) = paste("Fold", c(1:10), sep = " ")
+rownames(svm_cv) = c("CV acc Method 1", "CV acc Method 2", "CV acc Method 1 New Cutoff", "CV acc Method 2 New Cutoff")
+```
+
+```{r}
+svm_cv
+```
+
+```{r}
+png(filename = "3-2-1.png", width=1400, height=110) 
+grid.table(svm_cv) 
+dev.off()
+```
+
+#### rf
+
+```{r}
+rf_mod_func = function(in_data){
+  train(label ~ ., 
+                data = in_data, 
+                method="rf")
+}
+```
+
+```{r}
+rf_acc_1 = cv_method1(rf_mod_func, 10, cv_1_1, cv_1_2, cv_1_3, cv_test_1, loss_test)
+```
+
+```{r}
+rf_update_result_1 = plot_roc_update(rf_acc_1, 10, cv_test_1)
+
+```
+
+```{r}
+rf_update_result_1
+```
+
+
+```{r}
+rf_acc_1$test_acc
+```
+
+```{r}
+rf_acc_1$cv_acc
+```
+
+```{r}
+rf_acc_2 = cv_method2(rf_mod_func, 10, image1, image2, image3, cv_test_2, loss_test, 0.2)
+```
+
+```{r}
+rf_update_result_2 = plot_roc_update(rf_acc_2, 10, cv_test_2)
+```
+
+```{r}
+rf_update_result_2
+```
+
+```{r}
+rf_acc_2$test_acc
+```
+
+```{r}
+rf_acc_2$cv_acc
+```
+
+```{r}
+rf_cv = as.matrix(rbind(
+  rf_acc_1$cv_acc,
+  rf_acc_2$cv_acc,
+  rf_update_result_1$updated_result$new_acc,
+  rf_update_result_2$updated_result$new_acc
+))
+
+colnames(rf_cv) = paste("Fold", c(1:10), sep = " ")
+rownames(rf_cv) = c("CV acc Method 1", "CV acc Method 2", "CV acc Method 1 New Cutoff", "CV acc Method 2 New Cutoff")
+```
+
+```{r}
+rf_cv
+```
+
+```{r}
+png(filename = "3-4-1.png", width=1400, height=110) 
+grid.table(rf_cv) 
+dev.off()
+```
+
+### (c)
+
+### plot 1
+
+```{r}
+## rf
+rf_raw_test_1 = c(0.6276983, 0.6283992, 0.6281890, 0.6280488, 0.6294038, 0.6273479, 0.6286796, 0.6274414, 0.6287964, 0.6084945)
+log_raw_test_1 = c(0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814,0.6086814, 0.6086814, 0.5952247)
+qda_raw_test_1 = c(0.5028736, 0.5028736, 0.5028736, 0.5028736, 0.5028736, 0.5028736, 0.5028736, 0.5028736, 0.5028736, 0.7024577)
+svm_raw_test_1 = c(0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6431642)
+
+
+max_value = max(c(rf_raw_test_1, log_raw_test_1, qda_raw_test_1, svm_raw_test_1 ))
+min_value = min(c(c(rf_raw_test_1, log_raw_test_1, qda_raw_test_1, svm_raw_test_1)))
+par(mar=c(5,4,2,9))
+plot(1:10, rf_raw_test_1, type = 'b', col = 2, ylim = c(min_value-0.05, max_value+0.05), xlab = 'Fold', ylab = 'Accurarcy', main = 'Test Accurarcy using Method 1', lwd = 2, pch=1)
+lines(1:10, log_raw_test_1, lwd = 2, pch = 2, type = 'b', col = 3)
+lines(1:10, qda_raw_test_1, lwd = 2, pch = 3, type = 'b', col = 4)
+lines(1:10, svm_raw_test_1, lwd = 2, pch = 4, type = "b", col = 5)
+
+```
+
+### plot 2
+
+```{r}
+rf_raw_cv_1 = c(0.7454702, 0.6533675, 0.7624925, 0.8225322, 0.7895029, 0.8146074, 0.8445731, 0.7963186, 0.9092098,0.9679130)
+log_raw_cv_1 = c(0.5343038, 0.3225944, 0.3817256, 0.4239960, 0.3633956, 0.3890861, 0.3824342,0.5316643, 0.8563579, 0.9654901)
+qda_raw_cv_1 = c(0.5562926, 0.7461063, 0.7956860, 0.8568122, 0.8426662, 0.8870342, 0.9615017, 0.9523392, 0.9264129, 0.9745269)
+svm_raw_cv_1 =c(0.5343038, 0.3225944, 0.3817855, 0.4239960, 0.3797203, 0.4485359, 0.4682986, 0.5965268, 0.8772240, 0.9553402)
+
+
+max_value = max(c(rf_raw_cv_1, log_raw_cv_1, qda_raw_cv_1, svm_raw_cv_1))
+min_value = min(c(rf_raw_cv_1, log_raw_cv_1, qda_raw_cv_1, svm_raw_cv_1))
+
+par(mar=c(5,4,2,9))
+plot(1:10, rf_raw_cv_1, type = 'b', col = 2, ylim = c(min_value-0.05, max_value+0.05), xlab = 'Fold', ylab = 'Accurarcy', main = 'CV Accurarcy using Method 1', lwd = 2, pch=1)
+lines(1:10, log_raw_cv_1, lwd = 2, pch = 2, type = 'b', col = 3)
+lines(1:10, qda_raw_cv_1, lwd = 2, pch = 3, type = 'b', col = 4)
+lines(1:10, svm_raw_cv_1, lwd = 2, pch = 4, type = "b", col = 5)
+
+
+
+```
+
+### plot 3
+
+```{r}
+rf_update_test_1 = c(0.6094757, 0.6096159, 0.6102000, 0.6101533, 0.6095926, 0.6096393, 0.6097795, 0.6098028, 0.6100598, 0.6313429)
+log_update_test_1 =c(0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6216709)
+qda_update_test_1 = c(0.504579, 0.504579, 0.504579, 0.504579, 0.504579, 0.504579, 0.504579, 0.504579,0.504579, 0.709443)
+svm_update_test_1 = c(0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6086814, 0.6875292)
+
+max_value = max(c(rf_update_test_1 , log_update_test_1, qda_update_test_1, svm_update_test_1))
+min_value = min(c(rf_update_test_1 , log_update_test_1, qda_update_test_1, svm_update_test_1))
+
+par(mar=c(5,4,2,9))
+plot(1:10, rf_update_test_1, type = 'b', col = 2, ylim = c(min_value-0.05, max_value+0.05), xlab = 'Fold', ylab = 'Accurarcy', main = 'Update Test Accurarcy using Method 1', lwd = 2, pch=1)
+lines(1:10, log_update_test_1, lwd = 2, pch = 2, type = 'b', col = 3)
+lines(1:10, qda_update_test_1, lwd = 2, pch = 3, type = 'b', col = 4)
+lines(1:10, svm_update_test_1, lwd = 2, pch = 4, type = "b", col = 5)
+legend("topleft",c("Random Forest","Logistic", "QDA", "SVM"), lwd = c(2, 2, 2), 
+       col = 2:5, pch = 1:4, inset=c(1,0), xpd=TRUE, bty="n")
+
+```
+
+
+### plot 4
+
+```{r}
+rf_update_cv_1 = c(0.5957251, 0.4043098, 0.6068904, 0.6320530, 0.5556582, 0.4481477, 0.3808411, 0.2533143, 0.1698718, 0.9547508)
+log_update_cv_1 = c(0.5343038, 0.3225944, 0.3817256, 0.4239334, 0.3630259, 0.3788820, 0.3361831, 0.3692889, 0.6770670, 0.9664069)
+qda_update_cv_1 = c(0.5590566, 0.7485954, 0.8002397, 0.8669461, 0.8521530, 0.8959627, 0.9694669, 0.9464775, 0.9118917, 0.9669963)
+svm_update_cv_1 = c(0.5343038, 0.322594, 0.3817256, 0.4239960, 0.3630259, 0.3792702, 0.3382540, 0.3570724, 0.6041340, 0.9551437)
+
+max_value = max(c(rf_update_cv_1 , log_update_cv_1, qda_update_cv_1, svm_update_cv_1))
+min_value = min(c(rf_update_cv_1 , log_update_cv_1, qda_update_cv_1, svm_update_cv_1))
+
+par(mar=c(5,4,2,9))
+plot(1:10, rf_update_test_1, type = 'b', col = 2, ylim = c(min_value-0.05, max_value+0.05), xlab = 'Fold', ylab = 'Accurarcy', main = 'Update ACC Accurarcy using Method 1', lwd = 2, pch=1)
+lines(1:10, log_update_cv_1, lwd = 2, pch = 2, type = 'b', col = 3)
+lines(1:10, qda_update_cv_1, lwd = 2, pch = 3, type = 'b', col = 4)
+lines(1:10, svm_update_cv_1, lwd = 2, pch = 4, type = "b", col = 5)
+
+```
+
+### plot 5
+
+```{r}
+rf_raw_test_2 = c(0.9572395, 0.9549855, 0.9538478, 0.9560588, 0.9557798, 0.9563379, 0.9573039, 0.9557798, 0.9570463, 0.6329935)
+log_raw_test_2 = c(0.8224965, 0.8224965, 0.8224965, 0.8224965, 0.8224965, 0.8224965, 0.8224965, 0.8224965, 0.8224965, 0.7370184)
+qda_raw_test_2 = c(0.8030053, 0.8030053, 0.8030053, 0.8030053, 0.8030053, 0.8030053, 0.8030053, 0.8030053, 0.8030053, 0.2796179)
+svm_raw_test_2 = c(0.9439090, 0.9439090, 0.9439090, 0.9403027, 0.9439090, 0.9439090, 0.9439090, 0.9439090, 0.9439090, 0.7370398)
+
+
+
+max_value = max(c(rf_raw_test_2, log_raw_test_2, qda_raw_test_2, svm_raw_test_2))
+min_value = min(c(c(rf_raw_test_2, log_raw_test_2, qda_raw_test_2, svm_raw_test_2)))
+par(mar=c(5,4,2,9))
+plot(1:10, rf_raw_test_2, type = 'b', col = 2, ylim = c(min_value-0.05, max_value+0.05), xlab = 'Fold', ylab = 'Accurarcy', main = 'Test Accurarcy using Method 2', lwd = 2, pch=1)
+lines(1:10, log_raw_test_2, lwd = 2, pch = 2, type = 'b', col = 3)
+lines(1:10, qda_raw_test_2, lwd = 2, pch = 3, type = 'b', col = 4)
+lines(1:10, svm_raw_test_2, lwd = 2, pch = 4, type = "b", col = 5)
+
+
+```
+
+### plot 6
+```{r}
+rf_raw_cv_2 = c(0.8409194, 0.5824610, 0.6526748, 0.3110271, 0.3311949, 0.7217509, 0.9104620, 0.9408667, 0.8901347, 0.6686575)
+log_raw_cv_2 = c(0.2296137, 0.3261589, 0.3407024, 0.2022694, 0.4651392, 0.7294097, 0.8878384, 0.8004144, 0.8236451, 0.4695343)
+qda_raw_cv_2 = c(0.1416309, 0.1665777, 0.1767175, 0.1952866, 0.3655975, 0.6272534, 0.7610445, 0.7300587, 0.8547261, 0.7651693)
+svm_raw_cv_2 = c(0.4293540, 0.4225059, 0.4096357, 0.2193192, 0.4372929, 0.7229292, 0.8979121, 0.8877762, 0.8490213, 0.4646420)
+
+max_value = max(c(rf_raw_cv_2, log_raw_cv_2, qda_raw_cv_2, svm_raw_cv_2))
+min_value = min(c(rf_raw_cv_2, log_raw_cv_2, qda_raw_cv_2, svm_raw_cv_2))
+
+par(mar=c(5,4,2,9))
+plot(1:10, rf_raw_cv_2, type = 'b', col = 2, ylim = c(min_value-0.05, max_value+0.05), xlab = 'Fold', ylab = 'Accurarcy', main = 'CV Accurarcy using Method 2', lwd = 2, pch=1)
+lines(1:10, log_raw_cv_2, lwd = 2, pch = 2, type = 'b', col = 3)
+lines(1:10, qda_raw_cv_2, lwd = 2, pch = 3, type = 'b', col = 4)
+lines(1:10, svm_raw_cv_2, lwd = 2, pch = 4, type = "b", col = 5)
+```
+
+### plot 7
+
+```{r}
+rf_update_test_2 = c(0.9343136, 0.9351937, 0.9350649, 0.9358806, 0.9330686, 0.9336482, 0.9353011, 0.9352367, 0.9343995, 0.8076849)
+log_update_test_2 = c(0.8701943, 0.8701943, 0.8701943, 0.8701943, 0.8701943, 0.8701943, 0.8701943, 0.8701943, 0.8701943, 0.7363958)
+qda_update_test_2 = c(0.9031233, 0.9031233, 0.9031233, 0.9031233, 0.9031233, 0.9031233, 0.9031233, 0.9031233, 0.9031233, 0.2830740)
+svm_update_test_2 = c(0.8102608, 0.8104325, 0.8102179, 0.8113127, 0.8103467, 0.8104540, 0.8100891, 0.8102608, 0.8104111, 0.7363744)
+
+
+max_value = max(c(rf_update_test_2 , log_update_test_2, qda_update_test_2, svm_update_test_2))
+min_value = min(c(rf_update_test_2 , log_update_test_2, qda_update_test_2, svm_update_test_2))
+
+par(mar=c(5,4,2,9))
+plot(1:10, rf_update_test_2, type = 'b', col = 2, ylim = c(min_value-0.05, max_value+0.05), xlab = 'Fold', ylab = 'Accurarcy', main = 'Update Test Accurarcy using Method 2', lwd = 2, pch=1)
+lines(1:10, log_update_test_2, lwd = 2, pch = 2, type = 'b', col = 3)
+lines(1:10, qda_update_test_2, lwd = 2, pch = 3, type = 'b', col = 4)
+lines(1:10, svm_update_test_2, lwd = 2, pch = 4, type = "b", col = 5)
+legend("topleft",c("Random Forest","Logistic", "QDA", "SVM"), lwd = c(2, 2, 2), 
+       col = 2:5, pch = 1:4, inset=c(1,0), xpd=TRUE, bty="n")
+
+```
+
+### plot 8
+
+```{r}
+rf_update_cv_2 =c(0.9104924, 0.6105533, 0.6706310, 0.4009310, 0.3402890, 0.6967126, 0.5606956, 0.7595822, 0.8531524, 0.6358727)
+log_update_cv_2 = c(0.8134177, 0.6320231, 0.6702579, 0.4436427, 0.4129010, 0.6211853, 0.7542349, 0.3939054, 0.5197207, 0.4067603)
+qda_update_cv_2 = c(0.2545742, 0.2848750, 0.2745674, 0.3016002, 0.3527670, 0.5549075, 0.7235635, 0.6176623, 0.7720075, 0.7896944)
+svm_update_cv_2 = c(0.9689971, 0.8930250, 0.8785038, 0.6725633, 0.4152274, 0.6129374, 0.7862007, 0.3901934, 0.5145077, 0.4028210)
+
+max_value = max(c(rf_update_cv_2 , log_update_cv_2, qda_update_cv_2, svm_update_cv_2))
+min_value = min(c(rf_update_cv_2 , log_update_cv_2, qda_update_cv_2, svm_update_cv_2))
+
+par(mar=c(5,4,2,9))
+plot(1:10, rf_update_test_2, type = 'b', col = 2, ylim = c(min_value-0.05, max_value+0.05), xlab = 'Fold', ylab = 'Accurarcy', main = 'Update ACC Accurarcy using Method 2', lwd = 2, pch=1)
+lines(1:10, log_update_cv_2, lwd = 2, pch = 2, type = 'b', col = 3)
+lines(1:10, qda_update_cv_2, lwd = 2, pch = 3, type = 'b', col = 4)
+lines(1:10, svm_update_cv_2, lwd = 2, pch = 4, type = "b", col = 5)
+```
+
+
+
+## 4
+
+### (a)
+
+```{r}
+## get the validation data and train data of the 8th fold
+cv1 = cv_split_m2(image1, 10, 0.2)
+cv2 = cv_split_m2(image2, 10, 0.2)
+cv3 = cv_split_m2(image3, 10, 0.2)
+
+val_8 = c()
+train_8 = c()
+for (j in 1:10){
+  if (j == 8){
+    val_8 = rbind(cv1[[j]], 
+                  cv2[[j]],
+                  cv3[[j]])
+    }
+  else{
+    train_8 = rbind(cv1[[j]], 
+                    cv2[[j]],
+                    cv3[[j]])
+    }
+}
+
+
+## train fr model 
+rf = randomForest(label ~ .,  ntree = 100, data = train_8[,3:9])
+plot(rf, main = "Random Forest")  
+print(rf)
+
+## important features
+varImpPlot(rf, sort = T,n.var=6, main="Variable Importance")
+
+## plot the classification tree
+tree.df =tree(label~., train_8[,-c(1,2)])
+summary(tree.df)
+plot(tree.df)
+text(tree.df,pretty =0)
+
+```
+
+
+### (b)
+
+
+```{r}
+best_rf_test_label = rep(-1, nrow(cv_test_2))
+best_test_pred = predict(best_rf_mod, cv_test_2, type = "prob")[,'1']
+best_rf_test_label[best_test_pred > 0.85] = 1
+best_rf_test_label = as.factor(best_rf_test_label)
+```
+
+
+```{r}
+confusionMatrix(best_rf_test_label, cv_test_2$label)
+```
+
+```{r}
+plot_data_rf = data.frame(best_rf_test_label, cv_test_2$label)
+colnames(plot_data_rf) = c("Predicted", "Actual")
+```
+
+```{r}
+ggplot(plot_data_rf, aes(x=Predicted, fill=Actual)) +
+  geom_bar(position="dodge2") 
+```
+
+```{r}
+best_rf_test_label_1 = rep(-1, nrow(test_2_1))
+best_test_pred_1 = predict(best_rf_mod, test_2_1, type = "prob")[,'1']
+best_rf_test_label_1[best_test_pred_1 > 0.85] = 1
+best_rf_test_label_1 = as.factor(best_rf_test_label_1)
+test_2_1$pred_label = best_rf_test_label_1
+```
+
+```{r}
+test_2_1$land_to_cloud = as.factor(test_2_1$label == -1 & test_2_1$pred_label == 1)
+
+test_2_1$cloud_to_land = as.factor(test_2_1$label == 1 & test_2_1$pred_label == -1)
+```
+
+```{r}
+ggplot(test_2_1, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="image1", y="", col="") +
+  scale_color_manual(labels = c("not cloud", "unlabeled", "cloud"), values=c("green", "grey", "white")) +
+  theme(legend.text=element_text(size=12)) 
+```
+
+```{r}
+ggplot(test_2_1, aes(x=x_coor, y=y_coor, color=factor(cloud_to_land))) + 
+  geom_point() +
+  labs(x="image1", y="", col="") +
+  scale_color_manual(labels = c("Wrong Label", "Right Label"), values=c("white", "red")) +
+  theme(legend.text=element_text(size=12)) 
+```
+
+```{r}
+best_rf_test_label_2 = rep(-1, nrow(test_2_2))
+best_test_pred_2 = predict(best_rf_mod, test_2_2, type = "prob")[,'1']
+best_rf_test_label_2[best_test_pred_2 > 0.85] = 1
+best_rf_test_label_2 = as.factor(best_rf_test_label_2)
+test_2_2$pred_label = best_rf_test_label_2
+```
+
+```{r}
+test_2_2$land_to_cloud = as.factor(test_2_2$label == -1 & test_2_2$pred_label == 1)
+
+test_2_2$cloud_to_land = as.factor(test_2_2$label == 1 & test_2_2$pred_label == -1)
+```
+
+```{r}
+ggplot(test_2_2, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="image2", y="", col="") +
+  scale_color_manual(labels = c("not cloud", "unlabeled", "cloud"), values=c("green", "grey", "white")) +
+  theme(legend.text=element_text(size=12)) 
+```
+
+```{r}
+ggplot(test_2_2, aes(x=x_coor, y=y_coor, color=factor(cloud_to_land))) + 
+  geom_point() +
+  labs(x="image2", y="", col="") +
+  scale_color_manual(labels = c("Wrong Label", "Right Label"), values=c("white", "red")) +
+  theme(legend.text=element_text(size=12)) 
+```
+
+```{r}
+best_rf_test_label_3 = rep(-1, nrow(test_2_3))
+best_test_pred_3 = predict(best_rf_mod, test_2_3, type = "prob")[,'1']
+best_rf_test_label_3[best_test_pred_3 > 0.85] = 1
+best_rf_test_label_3 = as.factor(best_rf_test_label_3)
+test_2_3$pred_label = best_rf_test_label_3
+```
+
+```{r}
+test_2_3$land_to_cloud = as.factor(test_2_3$label == -1 & test_2_3$pred_label == 1)
+
+test_2_3$cloud_to_land = as.factor(test_2_3$label == 1 & test_2_3$pred_label == -1)
+```
+
+```{r}
+ggplot(test_2_3, aes(x=x_coor, y=y_coor, color=factor(label))) + 
+  geom_point() +
+  labs(x="image3", y="", col="") +
+  scale_color_manual(labels = c("not cloud", "unlabeled", "cloud"), values=c("green", "grey", "white")) +
+  theme(legend.text=element_text(size=12)) 
+```
+
+```{r}
+ggplot(test_2_3, aes(x=x_coor, y=y_coor, color=factor(cloud_to_land))) + 
+  geom_point() +
+  labs(x="image3", y="", col="") +
+  scale_color_manual(labels = c("Wrong Label", "Right Label"), values=c("white", "red")) +
+  theme(legend.text=element_text(size=12)) 
+```
+
+
+### (d)
+
+```{r}
+cv11 = cv_split_m1(10, cv_1_1)
+cv21 = cv_split_m1(10, cv_1_2)
+cv31 = cv_split_m1(10, cv_1_3)
+
+val_2 = c()
+train_2 = c()
+for (j in 1:10){
+  if (j == 10){
+    val_2 = rbind(cv11[[j]], 
+                         cv21[[j]],
+                         cv31[[j]])
+  }
+  else{
+    train_2 = rbind(cv11[[j]], 
+                         cv21[[j]],
+                         cv31[[j]])
+  }
+}
+```
+
+```{r}
+best_rf_mod2 = train(label ~ ., 
+                data = train_2, 
+                method="rf")
+```
+
+```{r}
+best_rf_test_label2 = rep(-1, nrow(cv_test_1))
+best_test_pred2 = predict(best_rf_mod2, cv_test_1, type = "prob")[,'1']
+best_rf_test_label2[best_test_pred2 > 0.104] = 1
+best_rf_test_label2 = as.factor(best_rf_test_label2)
+```
+
+
+```{r}
+confusionMatrix(best_rf_test_label2, cv_test_1$label)
+```
+
+```{r}
+plot_data_rf2 = data.frame(best_rf_test_label2, cv_test_1$label)
+colnames(plot_data_rf2) = c("Predicted", "Actual")
+```
+
+```{r}
+ggplot(plot_data_rf2, aes(x=Predicted, fill=Actual)) +
+  geom_bar(position="dodge2") 
+```
+
+
+
+
+
+
+
+
+
